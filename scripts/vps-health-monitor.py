@@ -3,7 +3,7 @@
 import subprocess, json, urllib.request, os, time, sys, re
 
 # cron环境PATH不含venv，补上hermes命令路径
-os.environ["PATH"] = "/home/ubuntu/.hermes/hermes-agent/venv/bin:" + os.environ.get("PATH", "/usr/bin:/bin")
+os.environ["PATH"] = os.path.join(HOME, ".hermes/hermes-agent/venv/bin") + ":" + os.environ.get("PATH", "/usr/bin:/bin")
 CPU_WARN, MEM_WARN, DISK_WARN = 90, 90, 90
 HOME = os.path.expanduser("~")
 WD = os.path.join(HOME, ".hermes/watchdog")
@@ -17,8 +17,8 @@ def log(m):
 
 def alert(title, detail):
     try:
-        m = f"⚠️ {title}\n{detail}".replace("'", "'\\''")
-        subprocess.run(f"hermes send --to weixin '{m}'", shell=True,
+        m = f"⚠️ {title}\n{detail}"
+        subprocess.run(["hermes", "send", "--to", "weixin", m],
                        capture_output=True, text=True, timeout=15)
         log(f" 告警已推送: {title}")
     except: log(" 告警推送失败")
@@ -40,7 +40,7 @@ def get_mcp_configs():
     try:
         r = subprocess.run([sys.executable, "-c", """
 import yaml, json
-with open("/home/ubuntu/.hermes/config.yaml") as f:
+with open(os.path.join(HOME, ".hermes", "config.yaml")) as f:
     cfg = yaml.safe_load(f)
 mcps = cfg.get("mcp_servers", {})
 out = {}
@@ -224,7 +224,7 @@ for title, detail in alerts:
 HASH_FILE = "/etc/hermes_watchdog_hashes"
 try:
     if not os.path.exists(HASH_FILE):
-        log(" ⚠️ 哈希基准缺失: /root/.hermes_watchdog_hashes")
+        log(f" ⚠️ 哈希基准缺失: {HASH_FILE}")
     else:
         with open(HASH_FILE) as f:
             expected = {}
@@ -235,7 +235,7 @@ try:
                     expected[name] = hash_val
         tampered = []
         for name, expected_hash in expected.items():
-            fpath = f"/home/ubuntu/.hermes/scripts/{name}" if name.endswith(".py") else f"/home/ubuntu/.hermes/state/{name}"
+            fpath = os.path.join(HOME, ".hermes/scripts", name) if name.endswith(".py") else os.path.join(HOME, ".hermes/state", name)
             try:
                 result = subprocess.run(["sha256sum", fpath], capture_output=True, text=True, timeout=5)
                 actual_hash = result.stdout.split()[0] if result.stdout else "MISSING"
@@ -252,33 +252,8 @@ try:
             if should(k):
                 alert("守望狗完整性异常", "、".join(tampered))
                 mark(k)
-        # ── 自愈：全绿时自动刷新哈希基线 ──
-        elif not alerts and expected:  # 有基线但无不匹配 → 正常变更
-            now_ts = time.time()
-            all_old = True
-            for name in expected:
-                fpath = f"/home/ubuntu/.hermes/scripts/{name}" if name.endswith(".py") else f"/home/ubuntu/.hermes/state/{name}"
-                try:
-                    mtime = os.path.getmtime(fpath)
-                    if now_ts - mtime < 600:  # 10分钟内改过的不纳入
-                        all_old = False
-                        break
-                except OSError:
-                    pass
-            if all_old:
-                try:
-                    files = []
-                    for name in expected:
-                        fpath = f"/home/ubuntu/.hermes/scripts/{name}" if name.endswith(".py") else f"/home/ubuntu/.hermes/state/{name}"
-                        r = subprocess.run(["sha256sum", fpath], capture_output=True, text=True, timeout=5)
-                        if r.stdout:
-                            files.append(f"{r.stdout.split()[0]}  {fpath}")
-                    if files:
-                        with open(HASH_FILE, "w") as hf:
-                            hf.write("\n".join(files) + "\n")
-                        log(" 🔄 哈希基线已自动刷新")
-                except Exception:
-                    pass
+        # 基线永不自动刷新：哈希变化即告警，人工核对确认合法变更后手动刷新基线
+        # （自动刷新会让攻击者篡改脚本后「等10分钟」就洗白基线）
 except Exception as e:
     log(f" ⚠️ 完整性校验异常: {e}")
 

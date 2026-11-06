@@ -8,6 +8,8 @@
 通道: https://127.0.0.1:9090 (mTLS 客户端证书) -> 失败自动回退 http://localhost:80/bridge-api/
 """
 import ssl, json, sys, http.client
+from pathlib import Path
+HERMES_DIR = Path.home() / ".hermes"
 
 def get_token():
     import glob, os
@@ -29,8 +31,9 @@ def call(payload):
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        ctx.load_cert_chain("/home/ubuntu/.hermes/bridge-certs/vps-client.pem",
-                            "/home/ubuntu/.hermes/bridge-certs/vps-client-key.pem")
+        cert = HERMES_DIR / "bridge-certs" / "vps-client.pem"
+        key = HERMES_DIR / "bridge-certs" / "vps-client-key.pem"
+        ctx.load_cert_chain(str(cert), str(key))
         conn = http.client.HTTPSConnection("127.0.0.1", 9090, context=ctx, timeout=10)
         conn.request("POST", "/", body=json.dumps(payload), headers={
             "Content-Type": "application/json", "Authorization": f"Bearer {token}"})

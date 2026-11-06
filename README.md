@@ -22,6 +22,8 @@
 | 健康监控 | 5 分钟一轮：网关/CPU/内存/磁盘/MCP 连通性 | 监控脚本 → 微信告警 |
 | 安全守望狗 | 端口/用户/SSH 异常即时告警 + 脚本完整性哈希校验 | 守望狗 → Bridge → 微信 |
 
+> ⚠️ **微信接入风险说明**：微信通道走非官方协议，有封号风险；本项目用小号隔离，重要数据全部同步到 Obsidian/飞书，不依赖微信存续。
+
 ## 架构
 
 ```mermaid
@@ -34,7 +36,7 @@ flowchart LR
     GW --> OBS[outbox 库] --> COUCH[CouchDB 复制] --> OBSEND[Obsidian 全端]
     CRON --> GW
     GW <-->|Bridge MCP mTLS| MAC[Mac 端 Agent]
-    MON[健康监控+守望狗] -->|告警| WX
+    MON[健康监控+守望狗] -->|常规告警走微信网关；网关挂掉走 Bridge→Mac 代发| WX
 ```
 
 详见 [docs/architecture.md](docs/architecture.md)。
@@ -44,8 +46,8 @@ flowchart LR
 没有一键安装——这套系统的价值在架构和踩坑记录，不在安装包。示意如下，全部用占位符：
 
 ```bash
-# 1. VPS 上装 Hermes Agent（参考官方文档）
-pip install hermes-agent
+# 1. VPS 上装 Hermes Agent
+# 按官方文档安装：https://hermes-agent.nousresearch.com/docs
 
 # 2. 配置网关通道（微信/飞书凭证各自申请，填入环境变量）
 export WECHAT_CHANNEL_KEY=<YOUR_WECHAT_KEY>
@@ -68,6 +70,10 @@ cp scripts/vps-health-monitor.py scripts/watchdog-alert.py ~/.hermes/scripts/
 ## 开源范围说明
 
 `scripts/` 里的脚本能放的都放了。部分脚本（管家调度、飞书归档、驾驶舱配置等）因为内嵌账号 ID、域名和凭证路径，**没有开源**——宁缺勿滥，洗不干净的不放。
+
+## 成本
+
+chat 通道用低价模型承担 ~90% 请求数，产出类任务（周报/日报）跑高质量模型，月成本可控在个位数美元；注意按 token 计低价模型占比略低于请求数占比。
 
 ## License
 

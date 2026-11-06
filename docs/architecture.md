@@ -14,9 +14,9 @@ flowchart TB
     subgraph vps[VPS · <YOUR_SERVER_IP>]
         GW[Hermes 网关 / Agent]
         CRON[cron 定时任务 ×19]
-        MON[健康监控 v2.3]
+        MON[健康监控]
         DOG[守望狗]
-        BR[Bridge Server :9090 mTLS]
+        BR[Bridge Server mTLS]
         OUTBOX[obsidian-outbox 库]
     end
     subgraph mac[Mac 端]
@@ -38,8 +38,8 @@ flowchart TB
     GW --> OUTBOX --> COUCH --> MAIN
     GW <--> BR <--> MACA
     MACA --> PULL --> VAULT
-    MON -->|告警| GW
-    DOG -->|严重告警走 Bridge| MACA
+    MON -->|常规告警走微信网关| GW
+    MON -.->|网关挂掉走 Bridge→Mac 代发| MACA
 ```
 
 ## 三端接入
@@ -51,7 +51,7 @@ flowchart TB
 ## 三机协作
 
 - **VPS**：中枢。所有入口流量、cron、监控都在这。
-- **Mac**：桌面搭档。能开浏览器、做图做表、读本地 vault。VPS 端遇到重活通过 **Bridge MCP** 渡桥过去。Bridge 走 mTLS（自签证书，客户端证书物理隔离，curl 裸握手过不了——这是故意的），端口 9090，外加 nginx 反代兜底通道。
+- **Mac**：桌面搭档。能开浏览器、做图做表、读本地 vault。VPS 端遇到重活通过 **Bridge MCP** 渡桥过去。Bridge 走 mTLS（自签证书，客户端证书物理隔离，curl 裸握手过不了——这是故意的），外加 nginx 反代兜底通道。
 - **平板**：消费端为主，偶发录入。
 
 ## systemd 服务清单（脱敏描述）
@@ -62,7 +62,7 @@ flowchart TB
 | `hermes-webui` | Web 控制台 |
 | `hermes-dashboard` | 驾驶舱页面（Mac 端源单向同步到 VPS 副本） |
 | `hermes-embed-api` | 平板/外部客户端直调的 API 服务（端口认证） |
-| `hermes-bridge` | 双机桥接服务，mTLS，:9090 |
+| `hermes-bridge` | 双机桥接服务，mTLS |
 | CouchDB | Obsidian LiveSync 复制链路核心 |
 
 ## cron 调度（19 个任务）
@@ -80,14 +80,22 @@ flowchart TB
 
 省钱是第一原则：
 
-- **chat 通道**（日常对话、简单查询）：便宜模型，承担约 90% 流量。
+- **chat 通道**（日常对话、简单查询）：便宜模型，承担按请求数计 ~90%（token 计略低）。
 - **产出类任务**（日报撰写、深度分析、周报）：贵模型，只跑定时任务和显式指派。
 
 分流靠 cron 任务级配置实现——每个 job 单独指定模型，对话默认走便宜档。一个月下来 API 成本控制在个位数美元级别。
 
 ## 安全体系
 
-- **守望狗**：监听端口基线 diff、新增用户检测、陌生 SSH 登录告警、cron 推送失败巡检。严重告警经 Bridge 推微信。
-- **完整性校验**：关键脚本 sha256 哈希基线存 `/etc`（root 权限），每次监控跑校验，全绿且 10 分钟内无变更时自动刷新基线。
+- **守望狗**：监听端口基线 diff、新增用户检测、陌生 SSH 登录告警、cron 推送失败巡检。告警链路只有一条并带降级：常规告警走微信网关；网关挂掉走 Bridge→Mac 代发。
+- **完整性校验**：关键脚本 sha256 哈希基线存 `/etc`（root 权限），每次监控跑校验。基线永不自动刷新——哈希变化即告警，人工核对后手动刷新。
 - **投递最小权限**：outbox 数据库用专用账号，物理上只能写 outbox 库，主库 forbidden——杜绝「投递脚本误删笔记」这类事故。
 - **凭证不入仓**：所有 token/密码走环境变量或 root-only 凭证文件。
+
+## 设计取舍
+
+**为什么自建监控不用 Prometheus**：单人维护的系统，运维成本比功能收益更贵。Prometheus + Alertmanager + exporters 一整套装起来、调阈值、修告警路由，代价远超 19 个 cron 和两百行脚本覆盖的需求。自建脚本 5 分钟一轮、直接调 hermes send 推微信，坏了看日志就能修——维护者就是唯一的 on-call，简单就是可运维。
+
+**为什么 CouchDB 复制不用 git 同步**：手机端 Obsidian（LiveSync）要求秒级实时同步，git pull/push 轮询做不到，且移动端冲突处理糟糕。CouchDB 的持续复制 + 字段级冲突解决是 LiveSync 的原生底座，改造成本为零。代价是多养一个 CouchDB 进程，但换来全端 ~3 秒同步，值得。
+
+**为什么 cron 不用消息队列**：当前规模是单人、单机、每天几十个任务，cron + systemd 已经提供调度、重试（兜底任务）和日志。引入消息队列是为不存在的并发量和可靠性需求付复杂度税——过度设计。等任务真多到 cron 管不过来再换不迟。

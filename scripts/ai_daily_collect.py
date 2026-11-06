@@ -76,16 +76,15 @@ SOURCES = [
         'lang': 'en',
         'desc': '海外科技媒体AI板块'
     },
-    # === T2: 微信公众号（专用抓取器，源级容错） ===
+    # === 微信公众号（专用抓取器，源级容错）—— 维护者自行添加订阅源 ===
     {
-        'name': '澄怀录',
+        'name': '<SOURCE_NAME>',
         'tier': 'T2',
         'type': 'wechat_recent',
         'url': 'https://mp.weixin.qq.com/s/<WECHAT_ARTICLE_ID>',
-        'biz': 'Hinode',
         'max_items': 2,
         'lang': 'zh',
-        'desc': '深度Agent/工具行业观察（Hermes沉默的33天作者），更新不定期'
+        'desc': '<占位示例，替换为自己的订阅源>'
     },
 ]
 

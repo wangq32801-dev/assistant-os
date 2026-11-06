@@ -75,7 +75,7 @@ def notify_via_bridge(msg):
         subprocess.run([
             "curl", "-s", "-X", "POST", "http://127.0.0.1:9090/",
             "-H", "Content-Type: application/json",
-            "-H", f"Authorization: Bearer {os.environ.get('BRIDGE_TOKEN', '')}",
+            "-H", f"Authorization: Bearer {os.environ.get('BRIDGE_TOKEN', '')}"
             "-d", payload
         ], timeout=10, capture_output=True)
     except Exception:
