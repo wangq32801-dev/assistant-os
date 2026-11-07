@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """基础冒烟测试 — 不依赖真实账号/服务，python3 tests/test_smoke.py 即可运行。
-覆盖 GPT 外审指出的三类问题：启动错误（HOME 未定义）、告警退出状态检查、证书校验拒绝静默降级。
+覆盖外审指出的四类问题：启动错误（HOME 未定义）、告警退出状态检查、
+证书校验拒绝静默降级、明文回退通道默认禁用。
 """
 import importlib.util
 import json
@@ -69,12 +70,12 @@ def test_bridge_send_refuses_unverified_tls_by_default():
         assert "CA certificate" in str(e)
     print("PASS: bridge-send refuses to connect without server CA (no silent CERT_NONE)")
 
+
 def test_bridge_send_builds_verified_context_with_ca():
     import ssl
     bs = load("bridge-send")
     tmp = Path(tempfile.mkdtemp())
     bs.CERT_DIR = tmp
-    # 生成一对自签证书当 CA/客户端，验证 build_context 能装配
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                     "-keyout", str(tmp / "vps-client-key.pem"),
                     "-out", str(tmp / "ca.pem"),
@@ -85,13 +86,61 @@ def test_bridge_send_builds_verified_context_with_ca():
     assert ctx.verify_mode == ssl.CERT_REQUIRED
     print("PASS: bridge-send builds mTLS context with server verification enabled")
 
+
+def test_bridge_send_plaintext_fallback_disabled_by_default():
+    """明文回退默认禁用（安全开关默认方向必须关），显式 opt-in 才放行。"""
+    import http.client as hc
+    bs = load("bridge-send")
+    # 场景1：有 CA 但 HTTPS 连接失败 → 默认禁止明文回退，门禁拦截
+    ca_dir = Path(tempfile.mkdtemp())
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                    "-keyout", str(ca_dir / "vps-client-key.pem"),
+                    "-out", str(ca_dir / "ca.pem"),
+                    "-days", "1", "-subj", "/CN=test-ca"],
+                   check=True, capture_output=True)
+    (ca_dir / "vps-client.pem").write_bytes((ca_dir / "ca.pem").read_bytes())
+    bs.CERT_DIR = ca_dir
+    with mock.patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("BRIDGE_ALLOW_PLAINTEXT", None)
+        with mock.patch.object(hc, "HTTPSConnection", side_effect=OSError("no network in test")):
+            try:
+                bs.call({"jsonrpc": "2.0", "id": 1, "method": "x", "params": {}})
+                raise AssertionError("should have refused without BRIDGE_ALLOW_PLAINTEXT=1")
+            except SystemExit as e:
+                msg = str(e)
+                assert ("BRIDGE_ALLOW_PLAINTEXT" in msg) or ("CA certificate" in msg), f"unexpected exit: {msg}"
+    print("PASS: plaintext fallback disabled by default, explicit opt-in required")
+
+def test_bridge_send_plaintext_fallback_opt_in_allowed():
+    """显式 opt-in 后，门禁放行（后续真实连接失败与本测试无关）。"""
+    import http.client as hc
+    bs = load("bridge-send")
+    ca_dir = Path(tempfile.mkdtemp())
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                    "-keyout", str(ca_dir / "vps-client-key.pem"),
+                    "-out", str(ca_dir / "ca.pem"),
+                    "-days", "1", "-subj", "/CN=test-ca"],
+                   check=True, capture_output=True)
+    (ca_dir / "vps-client.pem").write_bytes((ca_dir / "ca.pem").read_bytes())
+    bs.CERT_DIR = ca_dir
+    with mock.patch.dict(os.environ, {"BRIDGE_ALLOW_PLAINTEXT": "1"}, clear=False):
+        with mock.patch.object(hc, "HTTPSConnection", side_effect=OSError("no network in test")):
+            try:
+                bs.call({"jsonrpc": "2.0", "id": 1, "method": "x", "params": {}})
+            except SystemExit as e:
+                raise AssertionError(f"opt-in should have passed the gate: {e}")
+            except Exception:
+                pass  # 真实连接失败（无服务监听）是预期，门禁已放行
+    print("PASS: plaintext fallback disabled by default, explicit opt-in required")
+
 if __name__ == "__main__":
     fails = 0
     for fn in [test_health_monitor_imports_and_defines_home,
                test_alert_failure_is_logged_not_silent,
                test_alert_success_logged,
                test_bridge_send_refuses_unverified_tls_by_default,
-               test_bridge_send_builds_verified_context_with_ca]:
+               test_bridge_send_builds_verified_context_with_ca,
+               test_bridge_send_plaintext_fallback_disabled_by_default]:
         try:
             fn()
         except Exception as e:

@@ -11,7 +11,7 @@
          服务端 CA 证书从 ~/.hermes/bridge-certs/ 下自动探测（ca.pem / server-ca.pem / root-ca.pem）。
          仅限本机回环地址 + Bearer token 双重验证。
   通道2: http://127.0.0.1:80/bridge-api/ — nginx 反代回退通道，仅本机回环 + Bearer token。
-         若想强制禁用回退明文通道，设置环境变量 BRIDGE_NO_PLAINTEXT=1。
+         ⚠️ 默认禁用（明文回退是安全下坡）；确需开启时设 BRIDGE_ALLOW_PLAINTEXT=1。
   安全取舍：两条通道都绑定 127.0.0.1 回环，不出本机；证书全部自签。
 """
 import ssl, json, sys, os, http.client
@@ -80,9 +80,11 @@ def call(payload):
         raise
     except Exception as e:
         sys.stderr.write(f"[https-9090 error: {e}] trying nginx fallback\n")
-    # 通道2: nginx 反代回退（本机回环 + Bearer token；可用 BRIDGE_NO_PLAINTEXT=1 禁用）
-    if os.environ.get("BRIDGE_NO_PLAINTEXT") == "1":
-        raise SystemExit("ERROR: HTTPS channel failed and BRIDGE_NO_PLAINTEXT=1 forbids plaintext fallback.")
+    # 通道2: nginx 反代回退（本机回环 + Bearer token）。默认禁用：安全开关默认方向必须关。
+    if os.environ.get("BRIDGE_ALLOW_PLAINTEXT") != "1":
+        raise SystemExit(
+            "ERROR: HTTPS channel failed. Plaintext fallback is disabled by default; "
+            "set BRIDGE_ALLOW_PLAINTEXT=1 to allow the nginx HTTP fallback.")
     conn = http.client.HTTPConnection("127.0.0.1", 80, timeout=10)
     conn.request("POST", "/bridge-api/", body=json.dumps(payload), headers={
         "Content-Type": "application/json", "Authorization": f"Bearer {token}"})
