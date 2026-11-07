@@ -2,10 +2,10 @@
 """VPS 健康监控 v2.3 — 每5分钟检查一次，异常时微信告警（CPU改用/proc/stat采样+连续2次防抖）"""
 import subprocess, json, urllib.request, os, time, sys, re
 
+HOME = os.path.expanduser("~")
 # cron环境PATH不含venv，补上hermes命令路径
 os.environ["PATH"] = os.path.join(HOME, ".hermes/hermes-agent/venv/bin") + ":" + os.environ.get("PATH", "/usr/bin:/bin")
 CPU_WARN, MEM_WARN, DISK_WARN = 90, 90, 90
-HOME = os.path.expanduser("~")
 WD = os.path.join(HOME, ".hermes/watchdog")
 HL = os.path.join(WD, "health.log")
 AH = os.path.join(WD, "alerted.json")
@@ -18,10 +18,14 @@ def log(m):
 def alert(title, detail):
     try:
         m = f"⚠️ {title}\n{detail}"
-        subprocess.run(["hermes", "send", "--to", "weixin", m],
-                       capture_output=True, text=True, timeout=15)
-        log(f" 告警已推送: {title}")
-    except: log(" 告警推送失败")
+        r = subprocess.run(["hermes", "send", "--to", "weixin", m],
+                           capture_output=True, text=True, timeout=15)
+        if r.returncode == 0:
+            log(f" 告警已推送: {title}")
+        else:
+            log(f" 告警推送失败(exit={r.returncode}): {title} | {(r.stderr or r.stdout or '').strip()[:200]}")
+    except Exception as e:
+        log(f" 告警推送异常: {title} | {e}")
 
 def alerted():
     n = time.time()
@@ -74,188 +78,193 @@ def check_http(url, token, timeout=8):
         return False, str(ex)[:50]
 
 # ── Main ──
-alerts = []
+def main():
+    alerts = []
 
-# 1. Gateway（防抖：连续2次确认才告警，避免重启瞬间误报）
-try:
-    r = subprocess.run(["systemctl","--user","is-active","hermes-gateway-chat"],
-                       capture_output=True, text=True, timeout=5)
-    ok = r.stdout.strip() == "active"
-    log(f" {'✅' if ok else '❌'} 网关: {'正常' if ok else r.stdout.strip()}")
-    # 防抖
-    GW_ST = os.path.join(WD, "gateway_state.json")
-    prev_down = False
-    if os.path.exists(GW_ST):
-        try:
-            with open(GW_ST) as f: prev_down = json.load(f).get("down", False)
-        except Exception: prev_down = False
-    cur_down = not ok
-    with open(GW_ST, "w") as f: json.dump({"down": cur_down}, f)
-    sustained = cur_down and prev_down
-    if sustained: alerts.append(("VPS网关离线", f"状态: {r.stdout.strip()}（连续2次确认）"))
-except: alerts.append(("VPS网关检查失败", "systemctl异常"))
-
-# 2. Bridge
-try:
-    p = subprocess.run(["pgrep","-f","hermes-bridge-server.py"],
-                       capture_output=True, text=True, timeout=5)
-    # 端口检测（mTLS 需要客户端证书，curl 握手过不了）
-    c = subprocess.run(["ss","-tlnp"], capture_output=True, text=True, timeout=5)
-    port_ok = ":9090" in c.stdout
-    ok = bool(p.stdout.strip()) and port_ok
-    log(f" {'✅' if ok else '❌'} Bridge: {'在线' if ok else '离线'}")
-    if not ok: alerts.append(("Bridge服务离线", "进程或端口9090不可用"))
-except: pass
-
-# 3. CPU/Mem/Load
-try:
-    # CPU: /proc/stat 采样1.5s算真实瞬时占用，避免 top -bn1 首帧瞬时误报
-    def _cpu_snapshot():
-        with open("/proc/stat") as f:
-            vals = f.readline().split()
-        nums = [float(v) for v in vals[1:]]
-        idle = nums[3] + (nums[4] if len(nums) > 4 else 0)
-        return sum(nums), idle
-    t0, i0 = _cpu_snapshot()
-    time.sleep(1.5)
-    t1, i1 = _cpu_snapshot()
-    dt = t1 - t0
-    cpu = 100.0 * (dt - (i1 - i0)) / dt if dt > 0 else 0
-    # 防抖：连续2次(间隔5分钟=累计10分钟)超阈值才告警，杜绝瞬时尖峰瞎触发
-    CPU_ST = os.path.join(WD, "cpu_state.json")
-    prev_high = False
-    if os.path.exists(CPU_ST):
-        try:
-            with open(CPU_ST) as f: prev_high = json.load(f).get("high", False)
-        except Exception: prev_high = False
-    cur_high = cpu > CPU_WARN
-    with open(CPU_ST, "w") as f: json.dump({"high": cur_high}, f)
-    sustained = cur_high and prev_high
-    r2 = subprocess.run(["free","-m"], capture_output=True, text=True, timeout=5)
-    mem = 0
-    lines = r2.stdout.strip().split("\n")
-    if len(lines) >= 2:
-        p = lines[1].split()
-        mem = (float(p[1])-float(p[6] if len(p)>6 else p[3]))/float(p[1])*100
-    load = os.getloadavg()[0]
-    log(f" ✅ CPU {cpu:.0f}% | 内存 {mem:.0f}% | 负载 {load:.1f}")
-    if sustained: alerts.append(("CPU过高", f"{cpu:.0f}% (连续2次确认)"))
-    if mem > MEM_WARN: alerts.append(("内存过高", f"{mem:.0f}%"))
-except Exception as e:
-    log(f" CPU检测异常: {e}")
-
-# 4. Disk
-try:
-    r = subprocess.run(["df","-h","/"], capture_output=True, text=True, timeout=5)
-    p = r.stdout.strip().split("\n")[1].split()
-    disk = int(p[4].replace("%",""))
-    log(f" {'⚠️' if disk>90 else '✅'} 磁盘 {disk}%")
-    if disk > DISK_WARN: alerts.append(("磁盘将满", f"{disk}%"))
-except: pass
-
-# 5. MCP Connectivity
-log(" 🔌 MCP连通性检测...")
-mcps = get_mcp_configs()
-known_http = {"flomo", "ticktick"}
-
-for name, info in mcps.items():
-    if name == "bridge": continue
-    if not info.get("enabled", True):
-        log(f" ⏭️  {name}: 已禁用"); continue
-    url, auth, cmd = info.get("url",""), info.get("auth",""), info.get("cmd","")
-
-    if url and name in known_http:
-        ok, detail = check_http(url, auth)
-    elif cmd and ("bash " in cmd or "python3 " in cmd):
-        sp = cmd.strip().split()[1] if len(cmd.strip().split())>1 else ""
-        sp = sp.replace("~", HOME)
-        ok = os.path.exists(sp)
-        detail = "文件存在" if ok else f"文件缺失"
-    elif cmd and "npx" in cmd:
-        rx = subprocess.run(["which","npx"], capture_output=True, text=True, timeout=3)
-        ok = bool(rx.stdout.strip())
-        detail = "npx可用" if ok else "npx不存在"
-    else:
-        log(f" ⏭️  {name}: 跳过(非HTTP/无url)"); continue
-
-    log(f" {'✅' if ok else '❌'} {name}: {detail}")
-    if not ok:
-        # ── 自愈：Flomo 401 自动重载 token ──
-        if name == "flomo" and "401" in detail:
-            log(f" 🔧 尝试自愈 flomo 401...")
+    # 1. Gateway（防抖：连续2次确认才告警，避免重启瞬间误报）
+    try:
+        r = subprocess.run(["systemctl","--user","is-active","hermes-gateway-chat"],
+                           capture_output=True, text=True, timeout=5)
+        ok = r.stdout.strip() == "active"
+        log(f" {'✅' if ok else '❌'} 网关: {'正常' if ok else r.stdout.strip()}")
+        # 防抖
+        GW_ST = os.path.join(WD, "gateway_state.json")
+        prev_down = False
+        if os.path.exists(GW_ST):
             try:
-                env_file = os.path.join(HOME, ".hermes/.env")
-                new_token = None
-                if os.path.exists(env_file):
-                    with open(env_file) as ef:
-                        for line in ef:
-                            if "MCP_FLOMO_API_KEY" in line and "=" in line:
-                                new_token = line.split("=", 1)[1].strip()
-                                break
-                if new_token:
-                    subprocess.run([
-                        "hermes", "config", "set",
-                        "mcp_servers.flomo.headers.Authorization",
-                        f"Bearer {new_token}"
-                    ], capture_output=True, text=True, timeout=10)
-                    log(f" 🔧 已更新 flomo token")
-                    # 重试
-                    ok2, detail2 = check_http(url, new_token)
-                    if ok2:
-                        ok = True
-                        detail = f"自愈成功: {detail2}"
-                        log(f" ✅ flomo 自愈成功")
-                    else:
-                        detail = f"401+自愈失败: {detail2}"
-                        log(f" ❌ flomo 自愈失败: {detail2}")
-                else:
-                    log(f" ❌ .env中未找到MCP_FLOMO_API_KEY")
-            except Exception as he:
-                log(f" ❌ 自愈异常: {he}")
-        k = f"mcp_{name}"
+                with open(GW_ST) as f: prev_down = json.load(f).get("down", False)
+            except Exception: prev_down = False
+        cur_down = not ok
+        with open(GW_ST, "w") as f: json.dump({"down": cur_down}, f)
+        sustained = cur_down and prev_down
+        if sustained: alerts.append(("VPS网关离线", f"状态: {r.stdout.strip()}（连续2次确认）"))
+    except: alerts.append(("VPS网关检查失败", "systemctl异常"))
+
+    # 2. Bridge
+    try:
+        p = subprocess.run(["pgrep","-f","hermes-bridge-server.py"],
+                           capture_output=True, text=True, timeout=5)
+        # 端口检测（mTLS 需要客户端证书，curl 握手过不了）
+        c = subprocess.run(["ss","-tlnp"], capture_output=True, text=True, timeout=5)
+        port_ok = ":9090" in c.stdout
+        ok = bool(p.stdout.strip()) and port_ok
+        log(f" {'✅' if ok else '❌'} Bridge: {'在线' if ok else '离线'}")
+        if not ok: alerts.append(("Bridge服务离线", "进程或端口9090不可用"))
+    except: pass
+
+    # 3. CPU/Mem/Load
+    try:
+        # CPU: /proc/stat 采样1.5s算真实瞬时占用，避免 top -bn1 首帧瞬时误报
+        def _cpu_snapshot():
+            with open("/proc/stat") as f:
+                vals = f.readline().split()
+            nums = [float(v) for v in vals[1:]]
+            idle = nums[3] + (nums[4] if len(nums) > 4 else 0)
+            return sum(nums), idle
+        t0, i0 = _cpu_snapshot()
+        time.sleep(1.5)
+        t1, i1 = _cpu_snapshot()
+        dt = t1 - t0
+        cpu = 100.0 * (dt - (i1 - i0)) / dt if dt > 0 else 0
+        # 防抖：连续2次(间隔5分钟=累计10分钟)超阈值才告警，杜绝瞬时尖峰瞎触发
+        CPU_ST = os.path.join(WD, "cpu_state.json")
+        prev_high = False
+        if os.path.exists(CPU_ST):
+            try:
+                with open(CPU_ST) as f: prev_high = json.load(f).get("high", False)
+            except Exception: prev_high = False
+        cur_high = cpu > CPU_WARN
+        with open(CPU_ST, "w") as f: json.dump({"high": cur_high}, f)
+        sustained = cur_high and prev_high
+        r2 = subprocess.run(["free","-m"], capture_output=True, text=True, timeout=5)
+        mem = 0
+        lines = r2.stdout.strip().split("\n")
+        if len(lines) >= 2:
+            p = lines[1].split()
+            mem = (float(p[1])-float(p[6] if len(p)>6 else p[3]))/float(p[1])*100
+        load = os.getloadavg()[0]
+        log(f" ✅ CPU {cpu:.0f}% | 内存 {mem:.0f}% | 负载 {load:.1f}")
+        if sustained: alerts.append(("CPU过高", f"{cpu:.0f}% (连续2次确认)"))
+        if mem > MEM_WARN: alerts.append(("内存过高", f"{mem:.0f}%"))
+    except Exception as e:
+        log(f" CPU检测异常: {e}")
+
+    # 4. Disk
+    try:
+        r = subprocess.run(["df","-h","/"], capture_output=True, text=True, timeout=5)
+        p = r.stdout.strip().split("\n")[1].split()
+        disk = int(p[4].replace("%",""))
+        log(f" {'⚠️' if disk>90 else '✅'} 磁盘 {disk}%")
+        if disk > DISK_WARN: alerts.append(("磁盘将满", f"{disk}%"))
+    except: pass
+
+    # 5. MCP Connectivity
+    log(" 🔌 MCP连通性检测...")
+    mcps = get_mcp_configs()
+    known_http = {"flomo", "ticktick"}
+
+    for name, info in mcps.items():
+        if name == "bridge": continue
+        if not info.get("enabled", True):
+            log(f" ⏭️  {name}: 已禁用"); continue
+        url, auth, cmd = info.get("url",""), info.get("auth",""), info.get("cmd","")
+
+        if url and name in known_http:
+            ok, detail = check_http(url, auth)
+        elif cmd and ("bash " in cmd or "python3 " in cmd):
+            sp = cmd.strip().split()[1] if len(cmd.strip().split())>1 else ""
+            sp = sp.replace("~", HOME)
+            ok = os.path.exists(sp)
+            detail = "文件存在" if ok else f"文件缺失"
+        elif cmd and "npx" in cmd:
+            rx = subprocess.run(["which","npx"], capture_output=True, text=True, timeout=3)
+            ok = bool(rx.stdout.strip())
+            detail = "npx可用" if ok else "npx不存在"
+        else:
+            log(f" ⏭️  {name}: 跳过(非HTTP/无url)"); continue
+
+        log(f" {'✅' if ok else '❌'} {name}: {detail}")
         if not ok:
-            if should(k): alerts.append((f"{name} MCP异常", detail)); mark(k)
+            # ── 自愈：Flomo 401 自动重载 token ──
+            if name == "flomo" and "401" in detail:
+                log(f" 🔧 尝试自愈 flomo 401...")
+                try:
+                    env_file = os.path.join(HOME, ".hermes/.env")
+                    new_token = None
+                    if os.path.exists(env_file):
+                        with open(env_file) as ef:
+                            for line in ef:
+                                if "MCP_FLOMO_API_KEY" in line and "=" in line:
+                                    new_token = line.split("=", 1)[1].strip()
+                                    break
+                    if new_token:
+                        subprocess.run([
+                            "hermes", "config", "set",
+                            "mcp_servers.flomo.headers.Authorization",
+                            f"Bearer {new_token}"
+                        ], capture_output=True, text=True, timeout=10)
+                        log(f" 🔧 已更新 flomo token")
+                        # 重试
+                        ok2, detail2 = check_http(url, new_token)
+                        if ok2:
+                            ok = True
+                            detail = f"自愈成功: {detail2}"
+                            log(f" ✅ flomo 自愈成功")
+                        else:
+                            detail = f"401+自愈失败: {detail2}"
+                            log(f" ❌ flomo 自愈失败: {detail2}")
+                    else:
+                        log(f" ❌ .env中未找到MCP_FLOMO_API_KEY")
+                except Exception as he:
+                    log(f" ❌ 自愈异常: {he}")
+            k = f"mcp_{name}"
+            if not ok:
+                if should(k): alerts.append((f"{name} MCP异常", detail)); mark(k)
 
-for title, detail in alerts:
-    k = title[:20]
-    if should(k): alert(title, detail); mark(k)
+    for title, detail in alerts:
+        k = title[:20]
+        if should(k): alert(title, detail); mark(k)
 
-# 6. 守望狗完整性校验（交叉验证）
-HASH_FILE = "/etc/hermes_watchdog_hashes"
-try:
-    if not os.path.exists(HASH_FILE):
-        log(f" ⚠️ 哈希基准缺失: {HASH_FILE}")
-    else:
-        with open(HASH_FILE) as f:
-            expected = {}
-            for line in f:
-                line = line.strip()
-                if ":" in line:
-                    name, hash_val = line.split(":", 1)
-                    expected[name] = hash_val
-        tampered = []
-        for name, expected_hash in expected.items():
-            fpath = os.path.join(HOME, ".hermes/scripts", name) if name.endswith(".py") else os.path.join(HOME, ".hermes/state", name)
-            try:
-                result = subprocess.run(["sha256sum", fpath], capture_output=True, text=True, timeout=5)
-                actual_hash = result.stdout.split()[0] if result.stdout else "MISSING"
-                if actual_hash != expected_hash:
-                    tampered.append(f"{name}: 被篡改")
-                    log(f" ❌ {name} 哈希不匹配!")
-                else:
-                    log(f" ✅ {name}: 完整性正常")
-            except Exception:
-                tampered.append(f"{name}: 文件丢失")
-                log(f" ❌ {name}: 文件不存在")
-        if tampered:
-            k = "watchdog_integrity"
-            if should(k):
-                alert("守望狗完整性异常", "、".join(tampered))
-                mark(k)
-        # 基线永不自动刷新：哈希变化即告警，人工核对确认合法变更后手动刷新基线
-        # （自动刷新会让攻击者篡改脚本后「等10分钟」就洗白基线）
-except Exception as e:
-    log(f" ⚠️ 完整性校验异常: {e}")
+    # 6. 守望狗完整性校验（交叉验证）
+    HASH_FILE = "/etc/hermes_watchdog_hashes"
+    try:
+        if not os.path.exists(HASH_FILE):
+            log(f" ⚠️ 哈希基准缺失: {HASH_FILE}")
+        else:
+            with open(HASH_FILE) as f:
+                expected = {}
+                for line in f:
+                    line = line.strip()
+                    if ":" in line:
+                        name, hash_val = line.split(":", 1)
+                        expected[name] = hash_val
+            tampered = []
+            for name, expected_hash in expected.items():
+                fpath = os.path.join(HOME, ".hermes/scripts", name) if name.endswith(".py") else os.path.join(HOME, ".hermes/state", name)
+                try:
+                    result = subprocess.run(["sha256sum", fpath], capture_output=True, text=True, timeout=5)
+                    actual_hash = result.stdout.split()[0] if result.stdout else "MISSING"
+                    if actual_hash != expected_hash:
+                        tampered.append(f"{name}: 被篡改")
+                        log(f" ❌ {name} 哈希不匹配!")
+                    else:
+                        log(f" ✅ {name}: 完整性正常")
+                except Exception:
+                    tampered.append(f"{name}: 文件丢失")
+                    log(f" ❌ {name}: 文件不存在")
+            if tampered:
+                k = "watchdog_integrity"
+                if should(k):
+                    alert("守望狗完整性异常", "、".join(tampered))
+                    mark(k)
+            # 基线永不自动刷新：哈希变化即告警，人工核对确认合法变更后手动刷新基线
+            # （自动刷新会让攻击者篡改脚本后「等10分钟」就洗白基线）
+    except Exception as e:
+        log(f" ⚠️ 完整性校验异常: {e}")
 
-log(" ✅ 全部正常" if not alerts else f" ⚠️ 共{len(alerts)}个告警")
-sys.exit(0)
+    log(" ✅ 全部正常" if not alerts else f" ⚠️ 共{len(alerts)}个告警")
+    return
+
+
+if __name__ == "__main__":
+    main()

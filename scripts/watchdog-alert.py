@@ -63,23 +63,26 @@ def check_ssh():
     return None
 
 def notify_via_bridge(msg):
-    """严重告警通过Bridge发送，最终推到微信"""
-    import json
+    """严重告警通过Bridge发送，最终推到微信。
+    走 scripts/bridge-send.py（mTLS 证书校验版），不直接 curl 裸握手。
+    失败会写 stderr 并返回 False，由调用方决定是否降级到其他通道。"""
+    script = os.path.join(os.path.expanduser("~"), ".hermes", "scripts", "bridge-send.py")
+    if not os.path.isfile(script):
+        print("[notify_via_bridge] bridge-send.py not found, skip", file=sys.stderr)
+        return False
     try:
-        payload = json.dumps({
-            "jsonrpc": "2.0", "method": "tools/call",
-            "params": {"name": "bridge_send", "arguments": {
-                "to": "server", "content": msg, "priority": 0
-            }}, "id": 1
-        })
-        subprocess.run([
-            "curl", "-s", "-X", "POST", "http://127.0.0.1:9090/",
-            "-H", "Content-Type: application/json",
-            "-H", f"Authorization: Bearer {os.environ.get('BRIDGE_TOKEN', '')}"
-            "-d", payload
-        ], timeout=10, capture_output=True)
-    except Exception:
-        pass
+        r = subprocess.run(
+            [sys.executable, script, "send", "server", "message", msg, "0"],
+            capture_output=True, text=True, timeout=15)
+        if r.returncode == 0:
+            return True
+        print(f"[notify_via_bridge] failed exit={r.returncode}: "
+              f"{(r.stderr or r.stdout or '').strip()[:200]}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"[notify_via_bridge] error: {e}", file=sys.stderr)
+        return False
+
 
 def check_cron_delivery():
     """检查需要推送给用户的cron任务是否有推送失败"""

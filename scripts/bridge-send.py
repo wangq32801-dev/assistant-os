@@ -5,14 +5,23 @@
   bridge-send.py send <to> <type> <content>      # to=server|mac, type=message|task
   bridge-send.py receive <target>                # target=server|mac, 不 ack
   bridge-send.py raw <method> <params_json>      # 原始 JSON-RPC
-通道: https://127.0.0.1:9090 (mTLS 客户端证书) -> 失败自动回退 http://localhost:80/bridge-api/
+
+通道与安全说明:
+  通道1: https://127.0.0.1:9090 — mTLS（客户端证书 + 服务端证书校验）。
+         服务端 CA 证书从 ~/.hermes/bridge-certs/ 下自动探测（ca.pem / server-ca.pem / root-ca.pem）。
+         仅限本机回环地址 + Bearer token 双重验证。
+  通道2: http://127.0.0.1:80/bridge-api/ — nginx 反代回退通道，仅本机回环 + Bearer token。
+         若想强制禁用回退明文通道，设置环境变量 BRIDGE_NO_PLAINTEXT=1。
+  安全取舍：两条通道都绑定 127.0.0.1 回环，不出本机；证书全部自签。
 """
-import ssl, json, sys, http.client
+import ssl, json, sys, os, http.client
 from pathlib import Path
 HERMES_DIR = Path.home() / ".hermes"
+CERT_DIR = HERMES_DIR / "bridge-certs"
+CA_CANDIDATES = ["ca.pem", "server-ca.pem", "root-ca.pem"]
 
 def get_token():
-    import glob, os
+    import glob
     for environ in glob.glob("/proc/[0-9]*/environ"):
         try:
             with open(environ, "rb") as f:
@@ -24,16 +33,39 @@ def get_token():
             continue
     raise SystemExit("ERROR: no BRIDGE_TOKEN found in any process env")
 
+def build_context():
+    """mTLS context：客户端证书 + 服务端证书校验。找不到 CA 时显式报错而非静默降级。"""
+    ctx = ssl.create_default_context(cafile=None)
+    ca = None
+    for name in CA_CANDIDATES:
+        cand = CERT_DIR / name
+        if cand.is_file():
+            ca = cand
+            break
+    if ca is None:
+        raise SystemExit(
+            f"ERROR: no server CA certificate found in {CERT_DIR} "
+            f"(looked for: {', '.join(CA_CANDIDATES)}). "
+            "Refusing to connect without server verification. "
+            "Set BRIDGE_INSECURE=1 only if you understand the risk.")
+    ctx.load_verify_locations(cafile=str(ca))
+    cert = CERT_DIR / "vps-client.pem"
+    key = CERT_DIR / "vps-client-key.pem"
+    ctx.load_cert_chain(str(cert), str(key))
+    return ctx
+
 def call(payload):
     token = get_token()
-    # 通道1: mTLS HTTPS 直连
+    # 通道1: mTLS HTTPS 直连（服务端证书校验开启）
     try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        cert = HERMES_DIR / "bridge-certs" / "vps-client.pem"
-        key = HERMES_DIR / "bridge-certs" / "vps-client-key.pem"
-        ctx.load_cert_chain(str(cert), str(key))
+        if os.environ.get("BRIDGE_INSECURE") == "1":
+            # 显式 opt-out：仅本机回环 + token，跳过服务端校验
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            ctx.load_cert_chain(str(CERT_DIR / "vps-client.pem"), str(CERT_DIR / "vps-client-key.pem"))
+        else:
+            ctx = build_context()
         conn = http.client.HTTPSConnection("127.0.0.1", 9090, context=ctx, timeout=10)
         conn.request("POST", "/", body=json.dumps(payload), headers={
             "Content-Type": "application/json", "Authorization": f"Bearer {token}"})
@@ -44,9 +76,13 @@ def call(payload):
             print(out)
             return
         sys.stderr.write(f"[https-9090 failed: {resp.status}] trying nginx fallback\n")
+    except SystemExit:
+        raise
     except Exception as e:
         sys.stderr.write(f"[https-9090 error: {e}] trying nginx fallback\n")
-    # 通道2: nginx 反代
+    # 通道2: nginx 反代回退（本机回环 + Bearer token；可用 BRIDGE_NO_PLAINTEXT=1 禁用）
+    if os.environ.get("BRIDGE_NO_PLAINTEXT") == "1":
+        raise SystemExit("ERROR: HTTPS channel failed and BRIDGE_NO_PLAINTEXT=1 forbids plaintext fallback.")
     conn = http.client.HTTPConnection("127.0.0.1", 80, timeout=10)
     conn.request("POST", "/bridge-api/", body=json.dumps(payload), headers={
         "Content-Type": "application/json", "Authorization": f"Bearer {token}"})
