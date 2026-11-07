@@ -1,4 +1,3 @@
-print("MARKER: module executing")
 #!/usr/bin/env python3
 """基础冒烟测试 — 不依赖真实账号/服务，python3 tests/test_smoke.py 即可运行。
 覆盖 GPT 外审指出的三类问题：启动错误（HOME 未定义）、告警退出状态检查、证书校验拒绝静默降级。
@@ -86,7 +85,6 @@ def test_bridge_send_builds_verified_context_with_ca():
     assert ctx.verify_mode == ssl.CERT_REQUIRED
     print("PASS: bridge-send builds mTLS context with server verification enabled")
 
-print("GUARD name =", repr(__name__))
 if __name__ == "__main__":
     fails = 0
     for fn in [test_health_monitor_imports_and_defines_home,
@@ -94,7 +92,6 @@ if __name__ == "__main__":
                test_alert_success_logged,
                test_bridge_send_refuses_unverified_tls_by_default,
                test_bridge_send_builds_verified_context_with_ca]:
-        print("RUNNING", fn.__name__, flush=True)
         try:
             fn()
         except Exception as e:
