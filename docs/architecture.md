@@ -2,7 +2,7 @@
 
 ## 总览
 
-三个入口，一台 VPS 上的 Agent 做中枢，产出落到飞书和 Obsidian，重活渡桥给 Mac 端搭档。
+三个入口，一台 VPS 上的 Agent 做中枢，产出落到飞书，重活渡桥给 Mac 端搭档。（原 Obsidian/CouchDB 复制投递线已于 2026-11 退役，见 lessons.md 第 7 条。）
 
 ```mermaid
 flowchart TB
@@ -63,15 +63,15 @@ flowchart TB
 | `hermes-dashboard` | 驾驶舱页面（Mac 端源单向同步到 VPS 副本） |
 | `hermes-embed-api` | 平板/外部客户端直调的 API 服务（端口认证） |
 | `hermes-bridge` | 双机桥接服务，mTLS |
-| CouchDB | Obsidian LiveSync 复制链路核心 |
+| CouchDB | Obsidian LiveSync 复制链路核心（该链路 2026-11 已退役，服务已停） |
 
-## cron 调度（19 个任务）
+## cron 调度（27 个在跑，注册共 42 个）
 
 典型任务分层：
 
 1. **采集类**：AI 日报多信源采集（RSS/网页/公众号，信源按 T0-T3 分级）→ 结构化 JSON → LLM 精选成报。
 2. **产出类**：日报/周报生成、每周复盘。
-3. **投递类**：产出写进 outbox 库（CouchDB 复制到 Obsidian 全端）+ 飞书归档 + 微信推送摘要。
+3. **投递类**：产出归档飞书 Wiki + 微信推送摘要（原 outbox 库 → CouchDB 复制到 Obsidian 全端的通道已退役，见 lessons.md 第 7 条）。
 4. **守护类**：健康监控每 5 分钟、守望狗每 10 分钟。
 
 投递策略：深夜时段微信推送自动降级为本地落盘（见 lessons.md 第 1 条），早上兜底任务翻查补推。
@@ -94,8 +94,8 @@ flowchart TB
 
 ## 设计取舍
 
-**为什么自建监控不用 Prometheus**：单人维护的系统，运维成本比功能收益更贵。Prometheus + Alertmanager + exporters 一整套装起来、调阈值、修告警路由，代价远超 19 个 cron 和两百行脚本覆盖的需求。自建脚本 5 分钟一轮、直接调 hermes send 推微信，坏了看日志就能修——维护者就是唯一的 on-call，简单就是可运维。
+**为什么自建监控不用 Prometheus**：单人维护的系统，运维成本比功能收益更贵。Prometheus + Alertmanager + exporters 一整套装起来、调阈值、修告警路由，代价远超 27 个在跑 cron 和两百行脚本覆盖的需求。自建脚本 5 分钟一轮、直接调 hermes send 推微信，坏了看日志就能修——维护者就是唯一的 on-call，简单就是可运维。
 
-**为什么 CouchDB 复制不用 git 同步**：手机端 Obsidian（LiveSync）要求秒级实时同步，git pull/push 轮询做不到，且移动端冲突处理糟糕。CouchDB 的持续复制 + 字段级冲突解决是 LiveSync 的原生底座，改造成本为零。代价是多养一个 CouchDB 进程，但换来全端 ~3 秒同步，值得。
+**为什么（曾经的）CouchDB 复制不用 git 同步**：手机端 Obsidian（LiveSync）要求秒级实时同步，git pull/push 轮询做不到，且移动端冲突处理糟糕。CouchDB 的持续复制 + 字段级冲突解决是 LiveSync 的原生底座，改造成本为零。代价是多养一个 CouchDB 进程，但换来全端 ~3 秒同步，值得。（2026-11 更新：这条链路最终因投递账号权限过大引发误删事故而退役——先读 lessons.md 第 7 条再决定要不要照抄这个设计。）
 
 **为什么 cron 不用消息队列**：当前规模是单人、单机、每天几十个任务，cron + systemd 已经提供调度、重试（兜底任务）和日志。引入消息队列是为不存在的并发量和可靠性需求付复杂度税——过度设计。等任务真多到 cron 管不过来再换不迟。

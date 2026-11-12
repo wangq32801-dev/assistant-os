@@ -6,7 +6,7 @@ A personal AI assistant system, maintained by one person and running in producti
 
 ## What is this
 
-Not a framework, not a product — it's the assistant system I use every day. It runs on a small cloud VPS: I message it on WeChat and it takes notes, creates tasks, and delivers daily reports. A desktop agent on my Mac acts as a partner, and the two hand tasks to each other over an mTLS bridge. It has been running in production for months, with 19 cron jobs turning over on their own every day.
+Not a framework, not a product — it's the assistant system I use every day. It runs on a small cloud VPS: I message it on WeChat and it takes notes, creates tasks, and delivers daily reports. A desktop agent on my Mac acts as a partner, and the two hand tasks to each other over an mTLS bridge. It has been running in production for months, with 27 active cron jobs (42 registered) turning over on their own every day.
 
 What's open-sourced here: the **monitoring / alerting / delivery scripts** and the **architecture docs**. The agent runtime itself is the open-source Hermes Agent framework; the core configs contain private information so they stay closed — but how the system is built and every pitfall hit along the way is documented in `docs/`.
 
@@ -17,9 +17,9 @@ What's open-sourced here: the **monitoring / alerting / delivery scripts** and t
 | WeChat access | Direct chat over WeChat, with voice transcription | WeChat → VPS gateway → Agent |
 | Feishu access | Messages / approvals / Base tables / calendar | Feishu → gateway → Agent |
 | Tablet access | E-ink tablet as a thin client | Tablet app → gateway |
-| Scheduled jobs | 19 crons: daily/weekly reports, health monitor, watchdog | cron → Agent → delivery |
+| Scheduled jobs | 27 active crons (42 registered): daily/weekly reports, health monitor, watchdog | cron → Agent → delivery |
 | Daily AI digest | Multi-source collection → LLM curation | RSS/web scraping → LLM → Obsidian/WeChat |
-| Note delivery | Task output auto-synced to Obsidian on all devices | VPS → outbox store → CouchDB replication → all devices |
+| Note delivery | Originally auto-synced to Obsidian via CouchDB replication; retired 2026-11 after an over-privileged writer caused an accidental deletion (see lessons #7). Task outputs now go to Feishu wiki pages | VPS → Feishu open API |
 | Two-machine collaboration | VPS and Mac agents hand tasks to each other | Bridge MCP (mTLS) |
 | Health monitoring | 5-minute loop: gateway / CPU / memory / disk / MCP connectivity | monitor script → WeChat alert |
 | Security watchdog | Instant alerts on port/user/SSH anomalies + script integrity hash checks | watchdog → Bridge → WeChat |
@@ -33,7 +33,7 @@ flowchart LR
     WX[WeChat] --> GW
     FS[Feishu] --> GW
     PAD[Tablet] --> GW
-    GW[VPS Gateway / Hermes Agent] --> CRON[cron ×19]
+    GW[VPS Gateway / Hermes Agent] --> CRON[cron ×27]
     GW --> FSOUT[Feishu delivery]
     GW --> OBS[outbox store] --> COUCH[CouchDB replication] --> OBSEND[Obsidian everywhere]
     CRON --> GW
@@ -66,7 +66,7 @@ cp scripts/vps-health-monitor.py scripts/watchdog-alert.py ~/.hermes/scripts/
 
 ## Lessons learned (the most valuable part of this repo)
 
-- [docs/lessons.md](docs/lessons.md): WeChat rate-limiting took down all overnight deliveries; two gateways fighting over one token caused duplicate pushes; the docx API's misleading 404; cron edits silently not persisting; disk-gardening on a 59 GB box …
+- [docs/lessons.md](docs/lessons.md): WeChat rate-limiting took down all overnight deliveries; two gateways fighting over one token caused duplicate pushes; the docx API's misleading 404; cron edits silently not persisting; disk-gardening on a 59 GB box; the migration trap of "enabling the new" without "sealing the old"; an LLM assistant fabricating plausible details in casual chat; model downgrades without health-gated switching; a parallel-agent fanout where one dead API key silently failed all four subtasks …
 
 Every entry is a real production incident, written as **symptom → diagnosis → fix**.
 
