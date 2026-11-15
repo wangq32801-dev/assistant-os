@@ -13,7 +13,7 @@ flowchart TB
     end
     subgraph vps[VPS · <YOUR_SERVER_IP>]
         GW[Hermes 网关 / Agent]
-        CRON[cron 定时任务 ×19]
+        CRON[cron 定时任务 ×27]
         MON[健康监控]
         DOG[守望狗]
         BR[Bridge Server mTLS]
@@ -65,7 +65,7 @@ flowchart TB
 | `hermes-bridge` | 双机桥接服务，mTLS |
 | CouchDB | Obsidian LiveSync 复制链路核心（该链路 2026-11 已退役，服务已停） |
 
-## cron 调度（27 个在跑，注册共 42 个）
+## cron 调度（27 个在跑，注册共 49 个）
 
 典型任务分层：
 

@@ -1,12 +1,12 @@
 # assistant-os
 
-A personal AI assistant system, maintained by one person and running in production for months: three device endpoints (WeChat / Feishu / tablet), three-machine collaboration (Mac / VPS / tablet), 19 scheduled jobs, and a homegrown monitoring & security stack. This repo documents not just the code, but the full set of battle scars it took to keep it alive.
+A personal AI assistant system, maintained by one person and running in production for months: three device endpoints (WeChat / Feishu / tablet), three-machine collaboration (Mac / VPS / tablet), 27 scheduled jobs, and a homegrown monitoring & security stack. This repo documents not just the code, but the full set of battle scars it took to keep it alive.
 
 > English | [中文](README.zh-CN.md)
 
 ## What is this
 
-Not a framework, not a product — it's the assistant system I use every day. It runs on a small cloud VPS: I message it on WeChat and it takes notes, creates tasks, and delivers daily reports. A desktop agent on my Mac acts as a partner, and the two hand tasks to each other over an mTLS bridge. It has been running in production for months, with 27 active cron jobs (42 registered) turning over on their own every day.
+Not a framework, not a product — it's the assistant system I use every day. It runs on a small cloud VPS: I message it on WeChat and it takes notes, creates tasks, and delivers daily reports. A desktop agent on my Mac acts as a partner, and the two hand tasks to each other over an mTLS bridge. It has been running in production for months, with 27 active cron jobs (49 registered) turning over on their own every day.
 
 What's open-sourced here: the **monitoring / alerting / delivery scripts** and the **architecture docs**. The agent runtime itself is the open-source Hermes Agent framework; the core configs contain private information so they stay closed — but how the system is built and every pitfall hit along the way is documented in `docs/`.
 
@@ -17,7 +17,7 @@ What's open-sourced here: the **monitoring / alerting / delivery scripts** and t
 | WeChat access | Direct chat over WeChat, with voice transcription | WeChat → VPS gateway → Agent |
 | Feishu access | Messages / approvals / Base tables / calendar | Feishu → gateway → Agent |
 | Tablet access | E-ink tablet as a thin client | Tablet app → gateway |
-| Scheduled jobs | 27 active crons (42 registered): daily/weekly reports, health monitor, watchdog | cron → Agent → delivery |
+| Scheduled jobs | 27 active crons (49 registered): daily/weekly reports, health monitor, watchdog | cron → Agent → delivery |
 | Daily AI digest | Multi-source collection → LLM curation | RSS/web scraping → LLM → Obsidian/WeChat |
 | Note delivery | Originally auto-synced to Obsidian via CouchDB replication; retired 2026-11 after an over-privileged writer caused an accidental deletion (see lessons #7). Task outputs now go to Feishu wiki pages | VPS → Feishu open API |
 | Two-machine collaboration | VPS and Mac agents hand tasks to each other | Bridge MCP (mTLS) |
@@ -66,7 +66,7 @@ cp scripts/vps-health-monitor.py scripts/watchdog-alert.py ~/.hermes/scripts/
 
 ## Lessons learned (the most valuable part of this repo)
 
-- [docs/lessons.md](docs/lessons.md): WeChat rate-limiting took down all overnight deliveries; two gateways fighting over one token caused duplicate pushes; the docx API's misleading 404; cron edits silently not persisting; disk-gardening on a 59 GB box; the migration trap of "enabling the new" without "sealing the old"; an LLM assistant fabricating plausible details in casual chat; model downgrades without health-gated switching; a parallel-agent fanout where one dead API key silently failed all four subtasks …
+- [docs/lessons.md](docs/lessons.md): WeChat rate-limiting took down all overnight deliveries; two gateways fighting over one token caused duplicate pushes; the docx API's misleading 404; cron edits silently not persisting; disk-gardening on a 59 GB box; the migration trap of "enabling the new" without "sealing the old"; an LLM assistant fabricating plausible details in casual chat; model downgrades without health-gated switching; a parallel-agent fanout where one dead API key silently failed all four subtasks; a self-heal script that silently never worked after a sudo-policy change; context compression stalling the main conversation; a 429 rate-limit misread as an exhausted balance; per-group model routing that protects cron jobs first; doc-drift detection to keep runbooks honest …
 
 Every entry is a real production incident, written as **symptom → diagnosis → fix**.
 
