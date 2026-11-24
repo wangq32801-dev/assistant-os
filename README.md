@@ -1,12 +1,12 @@
 # assistant-os
 
-A personal AI assistant system, maintained by one person and running in production for months: three device endpoints (WeChat / Feishu / tablet), three-machine collaboration (Mac / VPS / tablet), 27 scheduled jobs, and a homegrown monitoring & security stack. This repo documents not just the code, but the full set of battle scars it took to keep it alive.
+A personal AI assistant system, maintained by one person and running in production for months: three device endpoints (WeChat / Feishu / tablet), three-machine collaboration (Mac / VPS / tablet), ~28 scheduled jobs, and a homegrown monitoring & security stack. This repo documents not just the code, but the full set of battle scars it took to keep it alive.
 
 > English | [中文](README.zh-CN.md)
 
 ## What is this
 
-Not a framework, not a product — it's the assistant system I use every day. It runs on a small cloud VPS: I message it on WeChat and it takes notes, creates tasks, and delivers daily reports. A desktop agent on my Mac acts as a partner, and the two hand tasks to each other over an mTLS bridge. It has been running in production for months, with 27 active cron jobs (49 registered) turning over on their own every day.
+Not a framework, not a product — it's the assistant system I use every day. It runs on a small cloud VPS: I message it on WeChat and it takes notes, creates tasks, and delivers daily reports. A desktop agent on my Mac acts as a partner, and the two hand tasks to each other over an mTLS bridge. It has been running in production for months, with ~28 active cron jobs (~50 registered) turning over on their own every day.
 
 What's open-sourced here: the **monitoring / alerting / delivery scripts** and the **architecture docs**. The agent runtime itself is the open-source Hermes Agent framework; the core configs contain private information so they stay closed — but how the system is built and every pitfall hit along the way is documented in `docs/`.
 
@@ -17,14 +17,14 @@ What's open-sourced here: the **monitoring / alerting / delivery scripts** and t
 | WeChat access | Direct chat over WeChat, with voice transcription | WeChat → VPS gateway → Agent |
 | Feishu access | Messages / approvals / Base tables / calendar | Feishu → gateway → Agent |
 | Tablet access | E-ink tablet as a thin client | Tablet app → gateway |
-| Scheduled jobs | 27 active crons (49 registered): daily/weekly reports, health monitor, watchdog | cron → Agent → delivery |
-| Daily AI digest | Multi-source collection → LLM curation | RSS/web scraping → LLM → Obsidian/WeChat |
+| Scheduled jobs | ~28 active crons (~50 registered): daily/weekly reports, health monitor, watchdog | cron → Agent → delivery |
+| Daily AI digest | Multi-source collection → LLM curation | RSS/web scraping → LLM → Feishu wiki page + Feishu group push |
 | Note delivery | Originally auto-synced to Obsidian via CouchDB replication; retired 2026-11 after an over-privileged writer caused an accidental deletion (see lessons #7). Task outputs now go to Feishu wiki pages | VPS → Feishu open API |
 | Two-machine collaboration | VPS and Mac agents hand tasks to each other | Bridge MCP (mTLS) |
 | Health monitoring | 5-minute loop: gateway / CPU / memory / disk / MCP connectivity | monitor script → WeChat alert |
 | Security watchdog | Instant alerts on port/user/SSH anomalies + script integrity hash checks | watchdog → Bridge → WeChat |
 
-> ⚠️ **WeChat integration risk**: the WeChat channel uses an unofficial protocol and carries ban risk. This project isolates it on a secondary account; all important data is synced to Obsidian/Feishu and does not depend on WeChat staying alive.
+> ⚠️ **WeChat integration risk**: the WeChat channel uses an unofficial protocol and carries ban risk. This project isolates it on a secondary account; all important data is archived in Feishu and does not depend on WeChat staying alive.
 
 ## Architecture
 
@@ -33,9 +33,8 @@ flowchart LR
     WX[WeChat] --> GW
     FS[Feishu] --> GW
     PAD[Tablet] --> GW
-    GW[VPS Gateway / Hermes Agent] --> CRON[cron ×27]
+    GW[VPS Gateway / Hermes Agent] --> CRON[cron ×~28]
     GW --> FSOUT[Feishu delivery]
-    GW --> OBS[outbox store] --> COUCH[CouchDB replication] --> OBSEND[Obsidian everywhere]
     CRON --> GW
     GW <-->|Bridge MCP mTLS| MAC[Mac-side Agent]
     MON[Health monitor + watchdog] -->|routine alerts via WeChat gateway; if gateway is down, via Bridge → Mac relay| WX
@@ -76,7 +75,7 @@ Everything in `scripts/` that could safely be published, is. Some scripts (butle
 
 ## Cost
 
-The chat channel runs a low-cost model handling ~90% of requests; production-grade tasks (weekly/daily reports) go to a higher-quality model. Total monthly cost stays in the single-digit USD range. Note: by token volume the cheap model's share is somewhat lower than its ~90% share of request count.
+Scheduled jobs always run on the low-cost model (pinned per job, so changing the chat model never touches them); interactive chat is pinned per channel to a stronger model. Total monthly cost stays in the single-digit USD range. Note: the ~90% figure is a historical estimate and is not re-measured regularly.
 
 ## License
 

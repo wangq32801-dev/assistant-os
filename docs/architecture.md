@@ -13,21 +13,16 @@ flowchart TB
     end
     subgraph vps[VPS · <YOUR_SERVER_IP>]
         GW[Hermes 网关 / Agent]
-        CRON[cron 定时任务 ×27]
+        CRON[cron 定时任务 ×~28]
         MON[健康监控]
         DOG[守望狗]
         BR[Bridge Server mTLS]
-        OUTBOX[obsidian-outbox 库]
     end
     subgraph mac[Mac 端]
         MACA[桌面 Agent]
-        PULL[cron 每5分钟拉 inbox]
-        VAULT[本地 Obsidian vault]
     end
     subgraph sinks[投递目的地]
         FSAPI[飞书消息/文档]
-        COUCH[CouchDB]
-        MAIN[obsidian-livesync 主库]
     end
 
     WX --> GW
@@ -35,9 +30,7 @@ flowchart TB
     PAD --> GW
     CRON --> GW
     GW --> FSAPI
-    GW --> OUTBOX --> COUCH --> MAIN
     GW <--> BR <--> MACA
-    MACA --> PULL --> VAULT
     MON -->|常规告警走微信网关| GW
     MON -.->|网关挂掉走 Bridge→Mac 代发| MACA
 ```
@@ -65,7 +58,7 @@ flowchart TB
 | `hermes-bridge` | 双机桥接服务，mTLS |
 | CouchDB | Obsidian LiveSync 复制链路核心（该链路 2026-11 已退役，服务已停） |
 
-## cron 调度（27 个在跑，注册共 49 个）
+## cron 调度（约 28 个在跑，注册约 50 个；任务有增减，此处为量级）
 
 典型任务分层：
 
@@ -80,21 +73,21 @@ flowchart TB
 
 省钱是第一原则：
 
-- **chat 通道**（日常对话、简单查询）：便宜模型，承担按请求数计 ~90%（token 计略低）。
-- **产出类任务**（日报撰写、深度分析、周报）：贵模型，只跑定时任务和显式指派。
+- **定时任务**（日报、周报、巡查、监控）：一律便宜模型，每个 job 逐个钉死。
+- **交互通道**（微信/飞书对话）：按通道钉更强的模型。
 
-分流靠 cron 任务级配置实现——每个 job 单独指定模型，对话默认走便宜档。一个月下来 API 成本控制在个位数美元级别。
+2026-11 之前是反过来的（对话便宜、产出贵），后来对对话质量的要求上来才调换。调换时的注意事项见 lessons.md 第 15 条——改全局默认前，先确认没有定时任务在隐式依赖它。
 
 ## 安全体系
 
 - **守望狗**：监听端口基线 diff、新增用户检测、陌生 SSH 登录告警、cron 推送失败巡检。告警链路只有一条并带降级：常规告警走微信网关；网关挂掉走 Bridge→Mac 代发。
 - **完整性校验**：关键脚本 sha256 哈希基线存 `/etc`（root 权限），每次监控跑校验。基线永不自动刷新——哈希变化即告警，人工核对后手动刷新。
-- **投递最小权限**：outbox 数据库用专用账号，物理上只能写 outbox 库，主库 forbidden——杜绝「投递脚本误删笔记」这类事故。
+- **投递最小权限**（历史，该链路已退役）：原 outbox 数据库用专用账号，物理上只能写 outbox 库，主库 forbidden——杜绝「投递脚本误删笔记」这类事故。原则仍然有效：自动投递账号只给「只能追加」的权限。
 - **凭证不入仓**：所有 token/密码走环境变量或 root-only 凭证文件。
 
 ## 设计取舍
 
-**为什么自建监控不用 Prometheus**：单人维护的系统，运维成本比功能收益更贵。Prometheus + Alertmanager + exporters 一整套装起来、调阈值、修告警路由，代价远超 27 个在跑 cron 和两百行脚本覆盖的需求。自建脚本 5 分钟一轮、直接调 hermes send 推微信，坏了看日志就能修——维护者就是唯一的 on-call，简单就是可运维。
+**为什么自建监控不用 Prometheus**：单人维护的系统，运维成本比功能收益更贵。Prometheus + Alertmanager + exporters 一整套装起来、调阈值、修告警路由，代价远超这二十多个在跑 cron 和两百行脚本覆盖的需求。自建脚本 5 分钟一轮、直接调 hermes send 推微信，坏了看日志就能修——维护者就是唯一的 on-call，简单就是可运维。
 
 **为什么（曾经的）CouchDB 复制不用 git 同步**：手机端 Obsidian（LiveSync）要求秒级实时同步，git pull/push 轮询做不到，且移动端冲突处理糟糕。CouchDB 的持续复制 + 字段级冲突解决是 LiveSync 的原生底座，改造成本为零。代价是多养一个 CouchDB 进程，但换来全端 ~3 秒同步，值得。（2026-11 更新：这条链路最终因投递账号权限过大引发误删事故而退役——先读 lessons.md 第 7 条再决定要不要照抄这个设计。）
 
