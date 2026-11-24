@@ -71,7 +71,7 @@ Every entry is a real production incident, written as **symptom → diagnosis �
 
 ## Scope of what's open
 
-Everything in `scripts/` that could safely be published, is. Some scripts (butler scheduling, Feishu archiving, dashboard configs) embed account IDs, domains and credential paths and are **not open-sourced** — better a smaller honest repo than a leaky complete one.
+Everything in `scripts/` that could safely be published, is. Some scripts (butler scheduling, Feishu archiving, dashboard configs) embed account IDs, domains and credential paths and are **not open-sourced** — better a smaller honest repo than a leaky complete one. The scripts that are here are sanitized copies: where they differ from the versions actually running in production, the running versions are the source of truth.
 
 ## Cost
 
