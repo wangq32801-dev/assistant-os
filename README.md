@@ -6,7 +6,7 @@ A personal AI assistant system, maintained by one person and running in producti
 
 ## What is this
 
-Not a framework, not a product — it's the assistant system I use every day. It runs on a small cloud VPS: I message it on WeChat and it takes notes, creates tasks, and delivers daily reports. A desktop agent on my Mac acts as a partner, and the two hand tasks to each other over an mTLS bridge. It has been running in production for months, with ~28 active cron jobs (~50 registered) turning over on their own every day.
+Not a framework, not a product — it's the assistant system I use every day. It runs on a small cloud VPS: I message it on Feishu and WeChat and it takes notes, creates tasks, and delivers daily reports. A desktop agent on my Mac acts as a partner, and the two hand tasks to each other over an mTLS bridge. It has been running in production for months, with ~28 active cron jobs (~50 registered) turning over on their own every day.
 
 What's open-sourced here: the **monitoring / alerting / delivery scripts** and the **architecture docs**. The agent runtime itself is the open-source Hermes Agent framework; the core configs contain private information so they stay closed — but how the system is built and every pitfall hit along the way is documented in `docs/`.
 
@@ -16,7 +16,7 @@ What's open-sourced here: the **monitoring / alerting / delivery scripts** and t
 |---|---|---|
 | WeChat access | Direct chat over WeChat, with voice transcription | WeChat → VPS gateway → Agent |
 | Feishu access | Messages / approvals / Base tables / calendar | Feishu → gateway → Agent |
-| Tablet access | E-ink tablet as a thin client | Tablet app → gateway |
+| Tablet access | Android tablet as a thin client | Tablet app → reverse SSH tunnel → API service |
 | Scheduled jobs | ~28 active crons (~50 registered): daily/weekly reports, health monitor, watchdog | cron → Agent → delivery |
 | Daily AI digest | Multi-source collection → LLM curation | RSS/web scraping → LLM → Feishu wiki page + Feishu group push |
 | Note delivery | Originally auto-synced to Obsidian via CouchDB replication; retired 2026-11 after an over-privileged writer caused an accidental deletion (see lessons #7). Task outputs now go to Feishu wiki pages | VPS → Feishu open API |
@@ -75,7 +75,7 @@ Everything in `scripts/` that could safely be published, is. Some scripts (butle
 
 ## Cost
 
-Scheduled jobs always run on the low-cost model (pinned per job, so changing the chat model never touches them); interactive chat is pinned per channel to a stronger model. Total monthly cost stays in the single-digit USD range. Note: the ~90% figure is a historical estimate and is not re-measured regularly.
+Scheduled jobs all run on the low-cost model: the global default is anchored there and no job overrides it, so changing the chat model never touches them. Some Feishu chats are overridden per chat to a stronger model; everything else follows the default. Total monthly cost stays in the single-digit USD range. Note: the ~90% figure is a historical estimate and is not re-measured regularly.
 
 ## License
 
