@@ -144,4 +144,4 @@
 
 **诊断**：官方 OpenAPI 里有个「订阅统计」接口，但它只回团队版席位数据，个人版 `Data` 为空——文档看着对口，实际不通。个人版用量只存在于控制台网关，鉴权不是套餐 Key，而是「临时 console token」：先用阿里云 RAM 的 AK/SK 签名换 token，再拿 token 打网关。子账号要同时满足三道授权，缺一道报一种错，错码各不相同，没法一次配齐只能逐道试：①自定义策略放行 `GenerateCLIAccessToken`（否则 403 NoPermission）②加入产品的业务空间成员（否则 `Team.NotAuthorised`）③业务空间页面权限勾「智能体-操作」（否则 `AuthorityPolicies.NoPermission`——接口要的是这个，凭直觉勾「订阅套餐」没用）。
 
-**解法**：`scripts/tokenplan-quota.py`，AK/SK 放环境变量，两步链路一次跑完。两个坑：自己按文档手写 ACS3 签名报 `signature does not match`，换官方 SDK 一次通——签名算法别手搓；返回字段 `per1MonthPercentage` 是**已用**比例，第一次报数时当成了剩余，把「已用七成」报成「剩七成」，结论完全反了。教训：**百分比字段先拿控制台对一次数再信；鉴权链路有多道时，按错误码逐道排，别猜**。
+**解法**：`scripts/tokenplan-quota.py`，AK/SK 放环境变量，两步链路一次跑完。两个坑：按文档手写 ACS3 签名报 `signature does not match`，先换官方 SDK 跑通，再对照服务端回显的规范串找出原因——规范串里「请求头段」和「SignedHeaders」之间要多一个空行，文档示例没写；别把 SDK 留成依赖（它装在 Agent 的临时环境里，升级就没）；返回字段 `per1MonthPercentage` 是**已用**比例，第一次报数时当成了剩余，把「已用七成」报成「剩七成」，结论完全反了。教训：**百分比字段先拿控制台对一次数再信；鉴权链路有多道时，按错误码逐道排，别猜**。
