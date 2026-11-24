@@ -21,6 +21,7 @@
 | 每日 AI 日报 | 多信源分级采集 → LLM 精选 | RSS/网页采集 → LLM → 飞书 Wiki 归档 + 飞书群推送 |
 | 笔记投递 | 原方案经 CouchDB 复制进 Obsidian 全端，2026-11 因投递账号权限过大引发误删事故后退役（见踩坑 #7）；现改为任务产出归档飞书 Wiki | VPS → 飞书开放 API |
 | 双机协作 | VPS 和 Mac 两个 Agent 互渡任务 | Bridge MCP（mTLS） |
+| 额度观测 | 订阅套餐本月已用百分比直读（RAM 子账号两步鉴权） | AK/SK → 临时 token → 控制台网关 |
 | 健康监控 | 5 分钟一轮：网关/CPU/内存/磁盘/MCP 连通性 | 监控脚本 → 微信告警 |
 | 安全守望狗 | 端口/用户/SSH 异常即时告警 + 脚本完整性哈希校验 | 守望狗 → Bridge → 微信 |
 
@@ -64,7 +65,7 @@ cp scripts/vps-health-monitor.py scripts/watchdog-alert.py ~/.hermes/scripts/
 
 ## 踩坑记录（这是本 repo 最值钱的部分）
 
-- [docs/lessons.md](docs/lessons.md)：微信限流深夜全挂、双 gateway 抢 token 重复推送、docx API 诈包、cron 静默不落盘、59G 小盘治理、迁移时「启用新」却没「封死旧」导致双写、助手闲聊里编造合理细节、模型降档不带探活门禁、并行派活一个 key 挂全军覆没、自愈脚本撞 sudo 密码墙形同虚设、上下文压缩卡死主对话、429 限流误判成余额耗尽、按群模型路由先护 cron、运维文档漂移探测……
+- [docs/lessons.md](docs/lessons.md)：微信限流深夜全挂、双 gateway 抢 token 重复推送、docx API 诈包、cron 静默不落盘、59G 小盘治理、迁移时「启用新」却没「封死旧」导致双写、助手闲聊里编造合理细节、模型降档不带探活门禁、并行派活一个 key 挂全军覆没、自愈脚本撞 sudo 密码墙形同虚设、上下文压缩卡死主对话、429 限流误判成余额耗尽、按群模型路由先护 cron、运维文档漂移探测、订阅额度 API Key 读不到要走 RAM 三道授权、百分比字段看反……
 
 每条都是真实生产事故，按「现象→诊断→解法」写。
 
